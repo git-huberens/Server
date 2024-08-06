@@ -1,0 +1,110 @@
+from flask import Flask, jsonify
+import os
+
+os.system("pip install scratchattach --upgrade")
+import scratchattach as scratch3
+from replit import db
+from apscheduler.schedulers.background import BackgroundScheduler
+import requests
+
+session = scratch3.Session(os.environ["session"],username="lotofgame")  #replace with your data
+conn = session.connect_cloud(project_id="878207414")  #replace with your project id
+
+client = scratch3.CloudRequests(
+    conn, force_reconnect=False)  
+#optional argument: ignore_exceptions=True
+
+client = scratch3.CloudRequests(conn, used_cloud_vars=["1","2","3"])
+
+#db["leaderboard"] = [] #setup
+
+lb = list(db["leaderboard"])
+
+
+
+def save_on_db():
+    print("Data saved on db")
+    db["leaderboard"] = lb
+
+@client.request(thread=True) 
+def set(data):
+    global lb
+    try:
+        result = [0]
+        result["data"] = data
+    except Exception as e:
+        print(e)
+        result = {"data": data}
+        lb.append(result)
+        save_on_db()
+    return [result["data"]]
+
+
+
+@client.request(thread=True)
+def leaderboard_page(page):
+    #return ["-", "Temporarily disabled", "-"]
+    page = int(page) - 1
+    index = page * 15
+    return_data = []
+    for i in range(9999999):
+        try:
+            return_data.append(lb[index + i]["data"])
+        except IndexError:
+            break
+    return return_data
+
+
+@client.event
+def on_ready():
+    print("Request handler is ready")
+
+
+app = Flask('app')
+page_html = ""
+
+
+@app.route('/')
+def hello_world():
+    return jsonify({"status": "up"})
+
+
+@app.route('/api/<user>')
+def api(user):
+    try:
+        _data = list(filter(lambda t: t['user'] == user, lb))
+        data = dict(_data[0])
+        data.pop("history")
+        return {"data": data, "matches": len(_data)}
+    except Exception:
+        return {"error": "NotFound"}, 404
+
+
+@app.route('/history/<user>')
+def api_history(user):
+    try:
+        data = dict(list(filter(lambda t: t['user'] == user, lb))[0])
+        data = data["history"]
+        returned = []
+        for i in data:
+            returned.append(dict(i))
+        return jsonify(returned)
+    except Exception:
+        return {"error": "NotFound"}, 404
+
+
+def keep_alive():
+
+    sched = BackgroundScheduler(daemon=True)
+    sched.add_job(save_on_db, 'interval', minutes=3)
+    sched.start()
+
+    app.run(host='0.0.0.0', port=8080)
+
+
+from threading import Thread
+
+thread = Thread(target=keep_alive, args=())
+thread.start()
+
+client.run(data_from_websocket=False)
